@@ -46,13 +46,6 @@ class Scanner:
             t = self._types[i] if self._types else self.type_name
             yield self._addrs[i], self._prevs[i], t
 
-    def head(self, limit):
-        out = []
-        for i in range(min(limit, len(self._addrs))):
-            t = self._types[i] if self._types else self.type_name
-            out.append((self._addrs[i], self._prevs[i], t))
-        return out
-
     def _prepare_needles(self, text):
         needles = []
         text_str = str(text).strip()
@@ -149,6 +142,10 @@ class Scanner:
         self._types = types
         return len(addrs)
 
+    def read_bytes_raw(self, address, size):
+        if not self.handle: return b""
+        return winmem.read_bytes(self.handle, address, size) or b""
+
     def read_value_dynamic(self, address, type_name):
         if type_name == "4 Bytes":
             d = winmem.read_bytes(self.handle, address, 4)
@@ -212,4 +209,4 @@ class Scanner:
         self._prevs = new_prevs
         self._types = new_types
         return len(new_addrs)
-                        
+                
