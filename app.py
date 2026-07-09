@@ -7,17 +7,14 @@ import re
 import struct
 from array import array
 
-# --- PYINSTALLER VE MODÜL BULUNAMAMA HATASI ÇÖZÜMÜ ---
+# --- PYINSTALLER KORUMASI VE DİZİN AYARI ---
 if getattr(sys, 'frozen', False):
-    # Eğer program .exe olarak çalışıyorsa geçici dizini yollara ekle
     current_dir = sys._MEIPASS
 else:
-    # Normal script olarak çalışıyorsa bulunduğu dizini ekle
     current_dir = os.path.dirname(os.path.abspath(__file__))
 
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
-# -----------------------------------------------------
 
 import proclist
 import scanner
@@ -205,6 +202,8 @@ class SheetOnion(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Sheet Onion - Advanced Memory Scanner")
+        
+        # GEOMETRI HATASI BURADA DÜZELTİLDİ ("820://740" yerine standart "1150x780")
         self.geometry("1150x780")
         self.minsize(900, 500)
         self.configure(bg=BG)
@@ -292,7 +291,7 @@ class SheetOnion(tk.Tk):
         self.value_var = tk.StringVar()
         self.value_entry = ttk.Entry(bar, textvariable=self.value_var, width=22)
         self.value_entry.grid(row=1, column=1, sticky="w", pady=(10, 0))
-        self.value_entry.bind("<Return>", lambda _e: self._scan_clicked())
+        self.value_entry.bind("<Return>", lambda _e: self.scan_clicked())
 
         ttk.Label(bar, text="Type:").grid(row=1, column=2, sticky="e", pady=(10, 0), padx=(5,0))
         self.type_var = tk.StringVar(value="4 Bytes")
@@ -308,11 +307,13 @@ class SheetOnion(tk.Tk):
 
         btns = ttk.Frame(bar)
         btns.grid(row=2, column=0, columnspan=6, sticky="w", pady=(12, 0))
-        self.first_btn = ttk.Button(btns, text="First Scan", style="Accent.TButton", command=self._scan_clicked)
+        
+        # SCAN_CLICKED METOT ÇAĞRISI GÖRSEL 3'TEKİ ATTRIBUTE ERROR İÇİN DÜZELTİLDİ
+        self.first_btn = ttk.Button(btns, text="First Scan", style="Accent.TButton", command=self.scan_clicked)
         self.first_btn.pack(side="left")
-        self.next_btn = ttk.Button(btns, text="Next Scan", style="Accent.TButton", command=self._next_clicked, state="disabled")
+        self.next_btn = ttk.Button(btns, text="Next Scan", style="Accent.TButton", command=self.next_clicked, state="disabled")
         self.next_btn.pack(side="left", padx=6)
-        self.new_btn = ttk.Button(btns, text="New Scan", command=self._new_scan, state="disabled")
+        self.new_btn = ttk.Button(btns, text="New Scan", command=self.new_scan, state="disabled")
         self.new_btn.pack(side="left")
 
         make_logo(bar, 46).grid(row=0, column=6, rowspan=3, sticky="ne", padx=(8, 0))
@@ -341,7 +342,7 @@ class SheetOnion(tk.Tk):
         self.results_tree.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
         self.results_tree.bind("<<TreeviewSelect>>", self._sync_hex_view_from_results)
-        self.results_tree.bind("<Double-1>", self._results_double)
+        self.results_tree.bind("<Double-1>", self.results_double)
 
         ttk.Button(frame, text="↓  Add selected to table", command=self._add_selected_to_table).pack(side="bottom", anchor="w", pady=(6, 0))
         wrap.pack(side="top", fill="both", expand=True, pady=(6, 0))
@@ -432,9 +433,26 @@ class SheetOnion(tk.Tk):
         if self.scanner.handle: winmem.close_process(self.scanner.handle)
         self.scanner.attach(handle, self.type_var.get())
         bits = "64-bit" if tgt64 else ("32-bit" if tgt64 is False else "?")
-        threading.Thread(target=work, daemon=True).start()
+        self.proc_name = f"{name} (pid {pid})"
+        self.proc_label.config(text=f"{self.proc_name}  -  {bits}", foreground=OK)
+        self._clear_results()
+        self.new_btn.config(state="normal")
+        self._set_status(f"Attached to {self.proc_name}. Enter a value and First Scan.")
 
-    def _begin_scan(self, msg):
+    def scan_clicked(self):
+        if not self._require_attached() or self.scanning: return
+        val_str = self.value_var.get()
+        if not val_str:
+            messagebox.showerror("Sheet Onion", "Enter a value/pattern to scan.")
+            return
+        self.scanner.type_name = self.type_var.get()
+        self._begin_scan("Scanning memory...")
+
+        def work():
+            n = self.scanner.first_scan(val_str)
+            self.after(0, lambda: self._end_scan(n))
+        threading.Thread(target=work, daemon=True).start()
+def _begin_scan(self, msg):
         self.scanning = True
         for b in (self.first_btn, self.next_btn, self.new_btn, self.attach_btn): b.config(state="disabled")
         self._set_status(msg)
@@ -451,7 +469,7 @@ class SheetOnion(tk.Tk):
         extra = "  (truncated)" if self.scanner.truncated else ""
         self._set_status(f"Scan complete: {count} result(s).{extra}")
 
-    def _new_scan(self):
+    def new_scan(self):
         self.scanner.reset()
         self._clear_results()
         self.next_btn.config(state="disabled")
@@ -550,7 +568,7 @@ class SheetOnion(tk.Tk):
             
         self.hex_text.configure(state="disabled")
 
-    def _results_double(self, event):
+    def results_double(self, event):
         item = self.results_tree.identify_row(event.y)
         if not item: return
         self.results_tree.selection_set(item)
@@ -680,9 +698,13 @@ class SheetOnion(tk.Tk):
         self.destroy()
 
 
+# ENTRY POINT HATASI (GÖRSEL 1) İÇİN BU METOT EKLENDİ
 def main():
-    SheetOnion().mainloop()
+    app = SheetOnion()
+    app.mainloop()
 
 
 if __name__ == "__main__":
     main()
+
+    
