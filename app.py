@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 import re
 import struct
+from array import array  # <--- Hataya sebep olan eksik kütüphane eklendi!
 
 import proclist
 import scanner
@@ -191,7 +192,6 @@ class SheetOnion(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Sheet Onion - Advanced Memory Scanner")
-        self.geometry("820://740")
         self.geometry("820x740")
         self.minsize(600, 420)
         self.configure(bg=BG)
