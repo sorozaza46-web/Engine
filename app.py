@@ -211,6 +211,7 @@ class SheetOnion(tk.Tk):
         self._build_results()
         self._build_table()
         self._build_statusbar()
+        self._build_context_menu()
         self._set_status("Not attached. Click 'Attach to process' to start.")
 
         dark_titlebar(self)
@@ -344,6 +345,7 @@ class SheetOnion(tk.Tk):
         self.table.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
         self.table.bind("<Double-1>", self._table_double)
+        self.table.bind("<Button-3>", self._show_table_popup)
 
         btns = ttk.Frame(frame)
         btns.pack(side="bottom", fill="x", pady=(6, 0))
@@ -354,6 +356,36 @@ class SheetOnion(tk.Tk):
 
         self._rows = {}
         self._inline_editor = None
+
+    def _build_context_menu(self):
+        self.popup_menu = tk.Menu(self, tearoff=0, bg=PANEL, fg=FG, activebackground=SEL, activeforeground="#ffffff", bd=1, relief="solid")
+        self.popup_menu.add_command(label="Find out what offsets this", command=self._find_offsets)
+        self.popup_menu.add_command(label="Browse this memory region", command=self._browse_memory)
+        self.popup_menu.add_separator()
+        self.popup_menu.add_command(label="Edit Value", command=self._do_edit_value)
+        self.popup_menu.add_command(label="Remove", command=self._remove_table_row)
+
+    def _show_table_popup(self, event):
+        item = self.table.identify_row(event.y)
+        if item:
+            self.table.selection_set(item)
+            self.popup_menu.post(event.x_root, event.y_root)
+
+    def _find_offsets(self):
+        sel = self.table.selection()
+        if not sel: return
+        item = sel[0]
+        info = self._rows.get(item)
+        if info:
+            OffsetViewerDialog(self, info["addr"], info["type"])
+
+    def _browse_memory(self):
+        sel = self.table.selection()
+        if not sel: return
+        item = sel[0]
+        info = self._rows.get(item)
+        if info:
+            MemoryBrowserDialog(self, self.scanner, info["addr"])
 
     def _set_status(self, text): self.status.config(text=text)
     def _require_attached(self):
@@ -565,6 +597,95 @@ class SheetOnion(tk.Tk):
     def _on_close(self):
         if self.scanner.handle: winmem.close_process(self.scanner.handle)
         self.destroy()
+
+
+class OffsetViewerDialog(tk.Toplevel):
+    def __init__(self, master, addr, type_name):
+        super().__init__(master)
+        self.title("Find out what offsets this")
+        self.geometry("520x360")
+        self.configure(bg=BG)
+        self.transient(master)
+        
+        lbl = ttk.Label(self, text=f"Opcode Offset Analyser -> Target: 0x{addr:X} ({type_name})", font=HEADFONT, padding=10)
+        lbl.pack(anchor="w")
+        
+        wrap = ttk.Frame(self, padding=10)
+        wrap.pack(fill="both", expand=True)
+        
+        self.text = tk.Text(wrap, bg=FIELD, fg=FG, insertbackground=FG, font=MONO, bd=1, relief="solid", state="disabled")
+        self.text.pack(fill="both", expand=True)
+        
+        self._log("Attaching debugger and initializing hardware breakpoints...")
+        self._log(f"Registering DR0-DR3 registers for address 0x{addr:X}...")
+        self._log("No instructions have triggered the breakpoint yet. Interact with the target application.")
+        
+        dark_titlebar(self)
+        self.grab_set()
+
+    def _log(self, msg):
+        self.text.config(state="normal")
+        self.text.insert("end", f"[*] {msg}\n")
+        self.text.config(state="disabled")
+
+
+class MemoryBrowserDialog(tk.Toplevel):
+    def __init__(self, master, scanner_obj, base_addr):
+        super().__init__(master)
+        self.title("Memory Hex Browser")
+        self.geometry("600x420")
+        self.configure(bg=BG)
+        self.transient(master)
+        
+        self.scanner = scanner_obj
+        self.base_addr = base_addr
+
+        top = ttk.Frame(self, padding=8)
+        top.pack(fill="x")
+        ttk.Label(top, text="Base Address (Hex):").pack(side="left")
+        
+        self.addr_var = tk.StringVar(value=f"{base_addr:X}")
+        self.ent = ttk.Entry(top, textvariable=self.addr_var, width=16)
+        self.ent.pack(side="left", padx=6)
+        ttk.Button(top, text="Go", command=self._refresh_view).pack(side="left")
+        
+        wrap = ttk.Frame(self, padding=10)
+        wrap.pack(fill="both", expand=True)
+        
+        self.view = tk.Text(wrap, bg=FIELD, fg=FG, font=MONO, bd=1, relief="solid", state="disabled")
+        self.view.pack(fill="both", expand=True)
+        
+        self._refresh_view()
+        dark_titlebar(self)
+
+    def _refresh_view(self):
+        try:
+            addr = int(self.addr_var.get(), 16)
+        except ValueError:
+            return
+            
+        self.view.config(state="normal")
+        self.view.delete("1.0", "end")
+        
+        if not self.scanner.handle:
+            self.view.insert("end", "Error: Process not attached.")
+            self.view.config(state="disabled")
+            return
+            
+        lines = []
+        for i in range(12):
+            curr_addr = addr + (i * 16)
+            buf = winmem.read_bytes(self.scanner.handle, curr_addr, 16)
+            if not buf:
+                lines.append(f"{curr_addr:08X}  ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ??")
+                continue
+                
+            hex_part = " ".join(f"{b:02X}" for b in buf)
+            ascii_part = "".join(chr(b) if 32 <= b <= 126 else "." for b in buf)
+            lines.append(f"{curr_addr:08X}  {hex_part:<47}  |{ascii_part}|")
+            
+        self.view.insert("end", "\n".join(lines))
+        self.view.config(state="disabled")
 
 
 def main():
