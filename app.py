@@ -1,4 +1,3 @@
-import os
 import sys
 import threading
 import tkinter as tk
@@ -6,15 +5,6 @@ from tkinter import messagebox, ttk
 import re
 import struct
 from array import array
-
-# --- PYINSTALLER KORUMASI VE DİZİN AYARI ---
-if getattr(sys, 'frozen', False):
-    current_dir = sys._MEIPASS
-else:
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-
-if current_dir not in sys.path:
-    sys.path.insert(0, current_dir)
 
 import proclist
 import scanner
@@ -202,21 +192,17 @@ class SheetOnion(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Sheet Onion - Advanced Memory Scanner")
-        
-        # GEOMETRI HATASI BURADA DÜZELTİLDİ ("820://740" yerine standart "1150x780")
-        self.geometry("1150x780")
-        self.minsize(900, 500)
+        self.geometry("820x740")
+        self.minsize(600, 420)
         self.configure(bg=BG)
 
         self.scanner = scanner.Scanner()
         self.proc_name = None
         self.scanning = False
-        self._current_hex_view_addr = None
 
         winmem.enable_debug_privilege()
 
-        self.columnconfigure(0, weight=3)
-        self.columnconfigure(1, weight=2)
+        self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
         self.rowconfigure(2, weight=1)
 
@@ -224,7 +210,6 @@ class SheetOnion(tk.Tk):
         self._build_toolbar()
         self._build_results()
         self._build_table()
-        self._build_hex_viewer()
         self._build_statusbar()
         self._set_status("Not attached. Click 'Attach to process' to start.")
 
@@ -275,11 +260,11 @@ class SheetOnion(tk.Tk):
 
     def _build_statusbar(self):
         self.status = ttk.Label(self, style="Status.TLabel", anchor="w", padding=5)
-        self.status.grid(row=3, column=0, columnspan=2, sticky="ew")
+        self.status.grid(row=3, column=0, sticky="ew")
 
     def _build_toolbar(self):
         bar = ttk.Frame(self, padding=8)
-        bar.grid(row=0, column=0, columnspan=2, sticky="ew")
+        bar.grid(row=0, column=0, sticky="ew")
         bar.columnconfigure(5, weight=1)
 
         self.attach_btn = ttk.Button(bar, text="Attach to process", command=self.attach)
@@ -291,7 +276,7 @@ class SheetOnion(tk.Tk):
         self.value_var = tk.StringVar()
         self.value_entry = ttk.Entry(bar, textvariable=self.value_var, width=22)
         self.value_entry.grid(row=1, column=1, sticky="w", pady=(10, 0))
-        self.value_entry.bind("<Return>", lambda _e: self.scan_clicked())
+        self.value_entry.bind("<Return>", lambda _e: self._scan_clicked())
 
         ttk.Label(bar, text="Type:").grid(row=1, column=2, sticky="e", pady=(10, 0), padx=(5,0))
         self.type_var = tk.StringVar(value="4 Bytes")
@@ -307,13 +292,11 @@ class SheetOnion(tk.Tk):
 
         btns = ttk.Frame(bar)
         btns.grid(row=2, column=0, columnspan=6, sticky="w", pady=(12, 0))
-        
-        # SCAN_CLICKED METOT ÇAĞRISI GÖRSEL 3'TEKİ ATTRIBUTE ERROR İÇİN DÜZELTİLDİ
-        self.first_btn = ttk.Button(btns, text="First Scan", style="Accent.TButton", command=self.scan_clicked)
+        self.first_btn = ttk.Button(btns, text="First Scan", style="Accent.TButton", command=self._scan_clicked)
         self.first_btn.pack(side="left")
-        self.next_btn = ttk.Button(btns, text="Next Scan", style="Accent.TButton", command=self.next_clicked, state="disabled")
+        self.next_btn = ttk.Button(btns, text="Next Scan", style="Accent.TButton", command=self._next_clicked, state="disabled")
         self.next_btn.pack(side="left", padx=6)
-        self.new_btn = ttk.Button(btns, text="New Scan", command=self.new_scan, state="disabled")
+        self.new_btn = ttk.Button(btns, text="New Scan", command=self._new_scan, state="disabled")
         self.new_btn.pack(side="left")
 
         make_logo(bar, 46).grid(row=0, column=6, rowspan=3, sticky="ne", padx=(8, 0))
@@ -333,7 +316,7 @@ class SheetOnion(tk.Tk):
 
         wrap = ttk.Frame(frame)
         self.results_tree = ttk.Treeview(wrap, columns=("addr", "type", "value"), show="headings")
-        for col, txt, w, anchor in (("addr", "Address", 140, "w"), ("type", "Type", 110, "w"), ("value", "Value (Hex/AOB)", 220, "w")):
+        for col, txt, w, anchor in (("addr", "Address", 180, "w"), ("type", "Type", 120, "w"), ("value", "Value", 200, "e")):
             self.results_tree.heading(col, text=txt, anchor=anchor)
             self.results_tree.column(col, width=w, anchor=anchor)
         stripe(self.results_tree)
@@ -341,19 +324,18 @@ class SheetOnion(tk.Tk):
         self.results_tree.configure(yscrollcommand=sb.set)
         self.results_tree.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
-        self.results_tree.bind("<<TreeviewSelect>>", self._sync_hex_view_from_results)
-        self.results_tree.bind("<Double-1>", self.results_double)
+        self.results_tree.bind("<Double-1>", self._results_double)
 
         ttk.Button(frame, text="↓  Add selected to table", command=self._add_selected_to_table).pack(side="bottom", anchor="w", pady=(6, 0))
         wrap.pack(side="top", fill="both", expand=True, pady=(6, 0))
 
     def _build_table(self):
-        frame = ttk.LabelFrame(self, text="Saved addresses (Freeze Option)", padding=4)
+        frame = ttk.LabelFrame(self, text="Saved addresses", padding=4)
         frame.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
 
         wrap = ttk.Frame(frame)
-        self.table = ttk.Treeview(wrap, columns=("freeze", "desc", "addr", "type", "value"), show="headings")
-        for col, txt, w, anchor in (("freeze", "[X]", 45, "center"), ("desc", "Description", 140, "w"), ("addr", "Address", 130, "w"), ("type", "Type", 90, "center"), ("value", "Value", 180, "w")):
+        self.table = ttk.Treeview(wrap, columns=("desc", "addr", "type", "value"), show="headings")
+        for col, txt, w, anchor in (("desc", "Description", 180, "w"), ("addr", "Address", 170, "w"), ("type", "Type", 110, "center"), ("value", "Value", 180, "e")):
             self.table.heading(col, text=txt, anchor=anchor)
             self.table.column(col, width=w, anchor=anchor)
         stripe(self.table)
@@ -361,10 +343,7 @@ class SheetOnion(tk.Tk):
         self.table.configure(yscrollcommand=sb.set)
         self.table.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
-        
-        self.table.bind("<Button-1>", self._table_click)
         self.table.bind("<Double-1>", self._table_double)
-        self.table.bind("<<TreeviewSelect>>", self._sync_hex_view_from_table)
 
         btns = ttk.Frame(frame)
         btns.pack(side="bottom", fill="x", pady=(6, 0))
@@ -375,29 +354,6 @@ class SheetOnion(tk.Tk):
 
         self._rows = {}
         self._inline_editor = None
-
-    def _build_hex_viewer(self):
-        frame = ttk.LabelFrame(self, text="Memory Hex & String Viewer (Live Panel)", padding=6)
-        frame.grid(row=1, column=1, rowspan=2, sticky="nsew", padx=(0, 8), pady=4)
-
-        top = ttk.Frame(frame)
-        top.pack(fill="x", pady=(0, 6))
-        ttk.Label(top, text="Address (Hex):").pack(side="left")
-        self.hex_addr_var = tk.StringVar()
-        self.hex_addr_entry = ttk.Entry(top, textvariable=self.hex_addr_var, width=16)
-        self.hex_addr_entry.pack(side="left", padx=4)
-        self.hex_addr_entry.bind("<Return>", lambda _e: self._jump_hex_view())
-        ttk.Button(top, text="Go", command=self._jump_hex_view).pack(side="left")
-
-        wrap = ttk.Frame(frame)
-        wrap.pack(fill="both", expand=True)
-
-        self.hex_text = tk.Text(wrap, font=MONO, bg=FIELD, fg=FG, bd=0, highlightthickness=0, state="disabled", wrap="none")
-        sb = ttk.Scrollbar(wrap, orient="vertical", command=self.hex_text.yview)
-        self.hex_text.configure(yscrollcommand=sb.set)
-        
-        self.hex_text.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
 
     def _set_status(self, text): self.status.config(text=text)
     def _require_attached(self):
@@ -439,7 +395,7 @@ class SheetOnion(tk.Tk):
         self.new_btn.config(state="normal")
         self._set_status(f"Attached to {self.proc_name}. Enter a value and First Scan.")
 
-    def scan_clicked(self):
+    def _scan_clicked(self):
         if not self._require_attached() or self.scanning: return
         val_str = self.value_var.get()
         if not val_str:
@@ -452,7 +408,19 @@ class SheetOnion(tk.Tk):
             n = self.scanner.first_scan(val_str)
             self.after(0, lambda: self._end_scan(n))
         threading.Thread(target=work, daemon=True).start()
-def _begin_scan(self, msg):
+
+    def _next_clicked(self):
+        if not self._require_attached() or self.scanning: return
+        mode = self.mode_var.get()
+        val_str = self.value_var.get() if mode == scanner.EXACT else None
+        self._begin_scan("Filtering results...")
+
+        def work():
+            n = self.scanner.next_scan(mode, val_str)
+            self.after(0, lambda: self._end_scan(n))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _begin_scan(self, msg):
         self.scanning = True
         for b in (self.first_btn, self.next_btn, self.new_btn, self.attach_btn): b.config(state="disabled")
         self._set_status(msg)
@@ -469,7 +437,7 @@ def _begin_scan(self, msg):
         extra = "  (truncated)" if self.scanner.truncated else ""
         self._set_status(f"Scan complete: {count} result(s).{extra}")
 
-    def new_scan(self):
+    def _new_scan(self):
         self.scanner.reset()
         self._clear_results()
         self.next_btn.config(state="disabled")
@@ -479,6 +447,7 @@ def _begin_scan(self, msg):
         self.results_tree.delete(*self.results_tree.get_children())
         self.count_label.config(text="Found: 0")
 
+    # --- BURADAN İTİBAREN YARIM KALAN DÖNGÜ VE METOTLAR TAMAMLANDI ---
     def _populate_results(self):
         self.results_tree.delete(*self.results_tree.get_children())
         total = self.scanner.count
@@ -488,87 +457,14 @@ def _begin_scan(self, msg):
         for addr, val, t_found in self.scanner.iter_all():
             if not needle or needle in f"{addr:x}":
                 rows.append((addr, val, t_found))
-                if len(rows) >= self.DISPLAY_LIMIT: break
+                if len(rows) >= self.DISPLAY_LIMIT: 
+                    break
 
-        for i, (addr, val, type_found) in enumerate(rows):
+   for i, (addr, val, type_found) in enumerate(rows):
             self.results_tree.insert("", "end", tags=(row_tag(i),), values=(f"{addr:X}", type_found, self._fmt_value(val)))
         self.count_label.config(text=f"Found: {total}")
 
-    def _sync_hex_view_from_results(self, _e):
-        sel = self.results_tree.selection()
-        if not sel: return
-        try:
-            addr_hex = self.results_tree.item(sel[0], "values")[0]
-            self._current_hex_view_addr = int(addr_hex, 16)
-            self.hex_addr_var.set(f"{self._current_hex_view_addr:X}")
-            self._update_hex_view()
-        except Exception: pass
-
-    def _sync_hex_view_from_table(self, _e):
-        sel = self.table.selection()
-        if not sel: return
-        try:
-            addr_hex = self.table.item(sel[0], "values")[2]
-            self._current_hex_view_addr = int(addr_hex, 16)
-            self.hex_addr_var.set(f"{self._current_hex_view_addr:X}")
-            self._update_hex_view()
-        except Exception: pass
-
-    def _jump_hex_view(self):
-        txt = self.hex_addr_var.get().strip()
-        if not txt: return
-        try:
-            self._current_hex_view_addr = int(txt, 16)
-            self._update_hex_view()
-        except ValueError:
-            messagebox.showerror("Sheet Onion", "Invalid hexadecimal address.")
-
-    def _update_hex_view(self):
-        if not self.scanner.handle or self._current_hex_view_addr is None:
-            return
-        
-        base_addr = (self._current_hex_view_addr // 16) * 16
-        raw_bytes = self.scanner.read_bytes_raw(base_addr, 64)
-        
-        self.hex_text.configure(state="normal")
-        self.hex_text.delete("1.0", "end")
-        
-        if not raw_bytes:
-            self.hex_text.insert("end", "?? Memory could not be read ??")
-            self.hex_text.configure(state="disabled")
-            return
-            
-        header = "Address    | 00 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF | Decoded Text\n"
-        sep    = "-----------+-------------------------------------------------+-------------\n"
-        self.hex_text.insert("end", header)
-        self.hex_text.insert("end", sep)
-
-        for offset in range(0, len(raw_bytes), 16):
-            chunk = raw_bytes[offset:offset+16]
-            curr_line_addr = base_addr + offset
-            
-            addr_str = f"{curr_line_addr:08X}   " if curr_line_addr <= 0xFFFFFFFF else f"{curr_line_addr:012X}"
-            
-            hex_parts = []
-            str_parts = []
-            
-            for b in chunk:
-                hex_parts.append(f"{b:02X}")
-                str_parts.append(chr(b) if 32 <= b <= 126 else ".")
-                
-            while len(hex_parts) < 16:
-                hex_parts.append("  ")
-                str_parts.append(" ")
-                
-            hex_dump = " ".join(hex_parts)
-            str_dump = "".join(str_parts)
-            
-            line = f"{addr_str} | {hex_dump} | {str_dump}\n"
-            self.hex_text.insert("end", line)
-            
-        self.hex_text.configure(state="disabled")
-
-    def results_double(self, event):
+    def _results_double(self, event):
         item = self.results_tree.identify_row(event.y)
         if not item: return
         self.results_tree.selection_set(item)
@@ -579,20 +475,23 @@ def _begin_scan(self, msg):
         for item in self.results_tree.selection():
             addr_hex, type_found, _value = self.results_tree.item(item, "values")
             added.append(self._add_table_row(int(addr_hex, 16), type_found, ""))
-        if added: self.table.selection_set(added)
+        if added: 
+            self.table.selection_set(added)
 
     def _add_manual(self):
         if not self._require_attached(): return
         text = ask_string(self, "Add address", "Address (hex):")
         if not text: return
-        try: addr = int(text.strip(), 16)
-        except ValueError: return
+        try: 
+            addr = int(text.strip(), 16)
+        except ValueError: 
+            return
         self._add_table_row(addr, self.type_var.get(), "manual")
 
     def _add_table_row(self, addr, type_name, desc):
         tag = row_tag(len(self.table.get_children()))
-        item = self.table.insert("", "end", tags=(tag,), values=(" ", desc, f"{addr:X}", type_name, "?"))
-        self._rows[item] = {"addr": addr, "type": type_name, "frozen": False, "freeze_val": None}
+        item = self.table.insert("", "end", tags=(tag,), values=(desc, f"{addr:X}", type_name, "?"))
+        self._rows[item] = {"addr": addr, "type": type_name}
         return item
 
     def _remove_table_row(self):
@@ -600,34 +499,14 @@ def _begin_scan(self, msg):
             self._rows.pop(item, None)
             self.table.delete(item)
 
-    def _table_click(self, event):
-        item = self.table.identify_row(event.y)
-        if not item: return
-        col = self.table.identify_column(event.x)
-        
-        if col == "#1":  
-            info = self._rows.get(item)
-            if not info: return
-            cur_vals = self.table.item(item, "values")
-            
-            if info["frozen"]:
-                info["frozen"] = False
-                info["freeze_val"] = None
-                self.table.item(item, values=(" ", cur_vals[1], cur_vals[2], cur_vals[3], cur_vals[4]))
-            else:
-                current_val = cur_vals[4]
-                if current_val in ("?", "??"): return
-                info["frozen"] = True
-                info["freeze_val"] = current_val
-                self.table.item(item, values=("X", cur_vals[1], cur_vals[2], cur_vals[3], cur_vals[4]))
-
     def _table_double(self, event):
         item = self.table.identify_row(event.y)
         if not item: return
         col = self.table.identify_column(event.x)
-        if col == "#1": return
-        if col == "#2": self._edit_description(item, col)
-        elif col == "#3": self._copy_to_clipboard(self.table.set(item, "addr"))
+        if col == "#1": 
+            self._edit_description(item, col)
+        elif col == "#2": 
+            self._copy_to_clipboard(self.table.set(item, "addr"))
         else:
             self.table.selection_set(item)
             self._do_edit_value()
@@ -665,31 +544,22 @@ def _begin_scan(self, msg):
         item = sel[0]
         info = self._rows.get(item)
         if not info or not self.scanner.handle: return
-        cur = self.table.item(item, "values")[4]
+        cur = self.table.item(item, "values")[3]
         new = ask_string(self, "Set value", f"New value for {info['addr']:X} ({info['type']}):", initial="" if cur in ("?", "??") else cur)
         if new is None: return
         
         ok = self.scanner.write_value_dynamic(info["addr"], new, info["type"])
         if not ok: 
             messagebox.showerror("Sheet Onion", "Write failed.")
-        elif info["frozen"]:
-            info["freeze_val"] = new
 
     def _tick(self):
         if self.scanner.handle and not self.scanning:
             for item, info in self._rows.items():
-                if info["frozen"] and info["freeze_val"] is not None:
-                    self.scanner.write_value_dynamic(info["addr"], info["freeze_val"], info["type"])
-                
                 val = self.scanner.read_value_dynamic(info["addr"], info["type"])
                 text = "??" if val is None else self._fmt_value(val)
                 cur = self.table.item(item, "values")
-                
-                freeze_marker = "X" if info["frozen"] else " "
-                if cur and (cur[4] != text or cur[0] != freeze_marker):
-                    self.table.item(item, values=(freeze_marker, cur[1], cur[2], cur[3], text))
-            
-            self._update_hex_view()
+                if cur and cur[3] != text:
+                    self.table.item(item, values=(cur[0], cur[1], cur[2], text))
             
         self.after(500, self._tick)
 
@@ -698,7 +568,6 @@ def _begin_scan(self, msg):
         self.destroy()
 
 
-# ENTRY POINT HATASI (GÖRSEL 1) İÇİN BU METOT EKLENDİ
 def main():
     app = SheetOnion()
     app.mainloop()
@@ -706,5 +575,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    
