@@ -1,0 +1,45 @@
+name: Build Sheet Onion EXE
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch: # GitHub arayüzünden manuel olarak tetikleyebilmeniz için
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    # 1. Kodu GitHub sunucusuna çek
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # 2. Python Ortamını Kur
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-python-version: '3.11' # Stabil bir Python sürümü
+
+    # 3. Bağımlılıkları ve PyInstaller'ı Yükle
+    - name: Install PyInstaller
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+
+    # 4. PyInstaller ile Tek Bir EXE Dosyası Üret
+    # --onefile: Her şeyi tek bir exe içine gömer
+    # --noconsole: GUI uygulaması olduğu için arkada siyah CMD ekranı açılmasını engeller
+    # main.py uygulamanın giriş noktasıdır
+    - name: Build EXE with PyInstaller
+      run: |
+        pyinstaller --onefile --noconsole main.py
+
+    # 5. Oluşan EXE Dosyasını GitHub Artifacts Olarak Yükle (İndirilebilir Yap)
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: SheetOnion-Windows-EXE
+        path: dist/main.exe
+        
