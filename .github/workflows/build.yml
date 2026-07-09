@@ -5,11 +5,11 @@ on:
     branches: [ "main", "master" ]
   pull_request:
     branches: [ "main", "master" ]
-  workflow_dispatch: # Manuel tetikleme için
+  workflow_dispatch: # GitHub paneli üzerinden manuel tetikleme için
 
 jobs:
   build:
-    runs-on: windows-latest # Windows API bağımlılıkları için gerekli
+    runs-on: windows-latest # Windows API (winmem/proclist) bağımlılıkları için şart
 
     steps:
     - name: Checkout Repository
@@ -19,19 +19,19 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-        cache: 'pip'
+        cache: 'pip' # Bağımlılıkları önbelleğe alarak sonraki derlemeleri hızlandırır
 
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
-        # Gerekli bağımlılıkları yüklüyoruz
+        # Tüm bağımlılıkları doğrudan pip komutuyla kuruyoruz (requirements.txt gerekmez)
         pip install pywin32 pyinstaller
 
     - name: Build EXE with PyInstaller
       run: |
         # --onefile: Tek bir exe üretir
-        # --noconsole: Arka planda terminal açılmasını engeller
-        # --paths=.: Modül yollarını bulması için kök dizini dahil eder
+        # --noconsole: Arka planda siyah CMD ekranı açılmasını engeller
+        # --paths=.: Yerel modüllerin (scanner, proclist, winmem) bulunmasını sağlar
         pyinstaller --onefile --noconsole --paths=. app.py
 
     - name: Upload Executable Artifact
@@ -39,5 +39,5 @@ jobs:
       with:
         name: SheetOnion-Windows-EXE
         path: dist/app.exe
-        retention-days: 5 # Dosya 5 gün GitHub'da saklanır
+        retention-days: 5 # Oluşan dosya GitHub üzerinde 5 gün boyunca saklanır
         
