@@ -7,8 +7,14 @@ import re
 import struct
 from array import array
 
-# --- MODÜL BULUNAMAMA HATASINI ÇÖZEN KRİTİK EKLEME ---
-current_dir = os.path.dirname(os.path.abspath(__file__))
+# --- PYINSTALLER VE MODÜL BULUNAMAMA HATASI ÇÖZÜMÜ ---
+if getattr(sys, 'frozen', False):
+    # Eğer program .exe olarak çalışıyorsa geçici dizini yollara ekle
+    current_dir = sys._MEIPASS
+else:
+    # Normal script olarak çalışıyorsa bulunduğu dizini ekle
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 # -----------------------------------------------------
@@ -199,7 +205,7 @@ class SheetOnion(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Sheet Onion - Advanced Memory Scanner")
-        self.geometry("1100x780")
+        self.geometry("1150x780")
         self.minsize(900, 500)
         self.configure(bg=BG)
 
@@ -326,7 +332,7 @@ class SheetOnion(tk.Tk):
 
         wrap = ttk.Frame(frame)
         self.results_tree = ttk.Treeview(wrap, columns=("addr", "type", "value"), show="headings")
-        for col, txt, w, anchor in (("addr", "Address", 140, "w"), ("type", "Type", 110, "w"), ("value", "Value", 180, "e")):
+        for col, txt, w, anchor in (("addr", "Address", 140, "w"), ("type", "Type", 110, "w"), ("value", "Value (Hex/AOB)", 220, "w")):
             self.results_tree.heading(col, text=txt, anchor=anchor)
             self.results_tree.column(col, width=w, anchor=anchor)
         stripe(self.results_tree)
@@ -346,7 +352,7 @@ class SheetOnion(tk.Tk):
 
         wrap = ttk.Frame(frame)
         self.table = ttk.Treeview(wrap, columns=("freeze", "desc", "addr", "type", "value"), show="headings")
-        for col, txt, w, anchor in (("freeze", "[X]", 45, "center"), ("desc", "Description", 140, "w"), ("addr", "Address", 130, "w"), ("type", "Type", 90, "center"), ("value", "Value", 150, "e")):
+        for col, txt, w, anchor in (("freeze", "[X]", 45, "center"), ("desc", "Description", 140, "w"), ("addr", "Address", 130, "w"), ("type", "Type", 90, "center"), ("value", "Value", 180, "w")):
             self.table.heading(col, text=txt, anchor=anchor)
             self.table.column(col, width=w, anchor=anchor)
         stripe(self.table)
@@ -426,35 +432,6 @@ class SheetOnion(tk.Tk):
         if self.scanner.handle: winmem.close_process(self.scanner.handle)
         self.scanner.attach(handle, self.type_var.get())
         bits = "64-bit" if tgt64 else ("32-bit" if tgt64 is False else "?")
-        self.proc_name = f"{name} (pid {pid})"
-        self.proc_label.config(text=f"{self.proc_name}  -  {bits}", foreground=OK)
-        self._clear_results()
-        self.new_btn.config(state="normal")
-        self._set_status(f"Attached to {self.proc_name}. Enter a value and First Scan.")
-
-    def _scan_clicked(self):
-        if not self._require_attached() or self.scanning: return
-        val_str = self.value_var.get()
-        if not val_str:
-            messagebox.showerror("Sheet Onion", "Enter a value/pattern to scan.")
-            return
-        self.scanner.type_name = self.type_var.get()
-        self._begin_scan("Scanning memory...")
-
-        def work():
-            n = self.scanner.first_scan(val_str)
-            self.after(0, lambda: self._end_scan(n))
-        threading.Thread(target=work, daemon=True).start()
-
-    def _next_clicked(self):
-        if not self._require_attached() or self.scanning: return
-        mode = self.mode_var.get()
-        val_str = self.value_var.get() if mode == scanner.EXACT else None
-        self._begin_scan("Filtering results...")
-
-        def work():
-            n = self.scanner.next_scan(mode, val_str)
-            self.after(0, lambda: self._end_scan(n))
         threading.Thread(target=work, daemon=True).start()
 
     def _begin_scan(self, msg):
@@ -573,7 +550,7 @@ class SheetOnion(tk.Tk):
             
         self.hex_text.configure(state="disabled")
 
-    def _results_double((self, event)):
+    def _results_double(self, event):
         item = self.results_tree.identify_row(event.y)
         if not item: return
         self.results_tree.selection_set(item)
@@ -696,7 +673,7 @@ class SheetOnion(tk.Tk):
             
             self._update_hex_view()
             
-        self.after(700, self._tick)
+        self.after(500, self._tick)
 
     def _on_close(self):
         if self.scanner.handle: winmem.close_process(self.scanner.handle)
