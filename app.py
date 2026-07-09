@@ -447,7 +447,6 @@ class SheetOnion(tk.Tk):
         self.results_tree.delete(*self.results_tree.get_children())
         self.count_label.config(text="Found: 0")
 
-    # --- BURADAN İTİBAREN YARIM KALAN DÖNGÜ VE METOTLAR TAMAMLANDI ---
     def _populate_results(self):
         self.results_tree.delete(*self.results_tree.get_children())
         total = self.scanner.count
@@ -460,7 +459,7 @@ class SheetOnion(tk.Tk):
                 if len(rows) >= self.DISPLAY_LIMIT: 
                     break
 
-   for i, (addr, val, type_found) in enumerate(rows):
+        for i, (addr, val, type_found) in enumerate(rows):
             self.results_tree.insert("", "end", tags=(row_tag(i),), values=(f"{addr:X}", type_found, self._fmt_value(val)))
         self.count_label.config(text=f"Found: {total}")
 
