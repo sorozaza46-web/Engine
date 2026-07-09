@@ -1,4 +1,4 @@
-Name: Build Sheet Onion EXE
+name: Build Sheet Onion EXE
 
 on:
   push:
