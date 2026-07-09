@@ -1,15 +1,13 @@
 import struct
+import re
 from array import array
-
 import winmem
 
 PAGE = 0x1000
+CHUNK = 4 * 1024 * 1024
+MAX_RESULTS = 10_000_000
 
-VALUE_TYPES = {
-    "4 Bytes": ("<i", 4, "i"),
-    "Float": ("<f", 4, "f"),
-}
-
+# Tarama modları
 EXACT = "Exact Value"
 CHANGED = "Changed"
 UNCHANGED = "Unchanged"
@@ -17,55 +15,14 @@ INCREASED = "Increased"
 DECREASED = "Decreased"
 SCAN_MODES = [EXACT, CHANGED, UNCHANGED, INCREASED, DECREASED]
 
-CHUNK = 4 * 1024 * 1024
-MAX_RESULTS = 10_000_000
-
-
-def scan_stream(read_fn, base, size, needle, width, chunk=CHUNK, append=None):
-    overlap = width - 1
-    pos = base
-    end = base + size
-    carry = b""
-    carry_addr = 0
-    while pos < end:
-        want = min(chunk, end - pos)
-        data = read_fn(pos, want)
-        rlen = len(data) if data else 0
-        if rlen:
-            if carry and carry_addr + len(carry) == pos:
-                buf = carry + data
-                buf_base = carry_addr
-            else:
-                buf = data
-                buf_base = pos
-            idx = buf.find(needle)
-            while idx != -1:
-                addr = buf_base + idx
-                if addr % width == 0:
-                    if append(addr):
-                        return True
-                idx = buf.find(needle, idx + 1)
-            if overlap and len(buf) >= overlap:
-                carry = buf[-overlap:]
-                carry_addr = buf_base + len(buf) - overlap
-            else:
-                carry = b""
-        if rlen == want:
-            pos += rlen
-        else:
-            pos = ((pos + rlen) // PAGE + 1) * PAGE
-            carry = b""
-    return False
-
-
 class Scanner:
     def __init__(self):
         self.handle = None
-        self.type_name = "4 Bytes"
+        self.type_name = "4 Bytes"  # "4 Bytes", "Float", "String (ASCII)", "String (UTF-16)", "Hex / AOB", "All Types"
         self.truncated = False
         self._addrs = array("Q")
-        self._prevs = None
-        self._prev_value = 0
+        self._prevs = []  # Değişken tipler için listeye çevrildi
+        self._types = []  # All Types modu için hangi adresin hangi tipte olduğunu tutar
         self.scan_kinds = winmem.ALL_KINDS
         self.writable_only = True
 
@@ -76,116 +33,208 @@ class Scanner:
 
     def reset(self):
         self._addrs = array("Q")
-        self._prevs = None
+        self._prevs = []
+        self._types = []
         self.truncated = False
 
     @property
     def count(self):
         return len(self._addrs)
 
-    def _fmt(self):
-        fmt, width, _tc = VALUE_TYPES[self.type_name]
-        return fmt, width
-
-    def _prev_of(self, i):
-        return self._prev_value if self._prevs is None else self._prevs[i]
-
     def iter_all(self):
-        if self._prevs is None:
-            pv = self._prev_value
-            for a in self._addrs:
-                yield a, pv
-        else:
-            yield from zip(self._addrs, self._prevs)
+        for i in range(len(self._addrs)):
+            t = self._types[i] if self._types else self.type_name
+            yield self._addrs[i], self._prevs[i], t
 
     def head(self, limit):
         out = []
         for i in range(min(limit, len(self._addrs))):
-            out.append((self._addrs[i], self._prev_of(i)))
+            t = self._types[i] if self._types else self.type_name
+            out.append((self._addrs[i], self._prevs[i], t))
         return out
 
-    def find_addr(self, addr):
-        try:
-            return self._addrs.index(addr)
-        except ValueError:
-            return -1
+    def _prepare_needles(self, text):
+        """Kullanıcının girdisine göre aranacak bayt kalıplarını ve regexleri hazırlar."""
+        needles = [] # (tip_adı, byte_pattern veya regex_obj, alignment_width, is_regex)
+        text_str = str(text).strip()
 
-    def read_value(self, address):
-        fmt, width = self._fmt()
-        data = winmem.read_bytes(self.handle, address, width)
-        if not data or len(data) < width:
-            return None
-        return struct.unpack(fmt, data)[0]
+        # 1. 4 Bytes Kontrolü
+        if self.type_name in ("4 Bytes", "All Types"):
+            try:
+                val = int(text_str, 0)
+                if -2147483648 <= val <= 2147483647:
+                    needles.append(("4 Bytes", struct.pack("<i", val), 4, False))
+            except ValueError: pass
 
-    def write_value(self, address, value):
-        fmt, _ = self._fmt()
-        return winmem.write_bytes(self.handle, address, struct.pack(fmt, value))
+        # 2. Float Kontrolü
+        if self.type_name in ("Float", "All Types"):
+            try:
+                val = float(text_str)
+                needles.append(("Float", struct.pack("<f", val), 4, False))
+            except ValueError: pass
 
-    def first_scan(self, value, progress=None):
-        fmt, width = self._fmt()
-        needle = struct.pack(fmt, value)
+        # 3. String ASCII Kontrolü
+        if self.type_name in ("String (ASCII)", "All Types") and text_str:
+            needles.append(("String (ASCII)", text_str.encode('ascii', errors='ignore'), 1, False))
+
+        # 4. String UTF-16 Kontrolü
+        if self.type_name in ("String (UTF-16)", "All Types") and text_str:
+            needles.append(("String (UTF-16)", text_str.encode('utf-16le', errors='ignore'), 2, False))
+
+        # 5. Hex / AOB Kontrolü (Wildcard '??' içerebilir)
+        if self.type_name in ("Hex / AOB", "All Types"):
+            clean = re.sub(r'\s+', '', text_str).upper()
+            if all(c in '0123456789ABCDEF?' for c in clean) and len(clean) >= 2:
+                if '?' in clean:
+                    # Regex'e çevir (örn: 45 ?? 8B -> b'E.Text')
+                    reg_parts = []
+                    for i in range(0, len(clean), 2):
+                        pair = clean[i:i+2]
+                        if '?' in pair: reg_parts.append(b'.')
+                        else: reg_parts.append(re.escape(bytes.fromhex(pair)))
+                    needles.append(("Hex / AOB", re.compile(b''.join(reg_parts), re.DOTALL), 1, True))
+                else:
+                    try:
+                        needles.append(("Hex / AOB", bytes.fromhex(clean), 1, False))
+                    except ValueError: pass
+
+        return needles
+
+    def first_scan(self, text_value):
+        self.reset()
+        needles = self._prepare_needles(text_value)
+        if not needles:
+            return 0
+
         addrs = array("Q")
-        self.truncated = False
+        prevs = []
+        types = []
 
-        def append(addr):
-            addrs.append(addr)
+        def append_match(addr, name, raw_len, data, idx):
             if len(addrs) >= MAX_RESULTS:
                 self.truncated = True
                 return True
+            addrs.append(addr)
+            # İlk taranan değeri görselleştirmek için sakla
+            if "String" in name:
+                prevs.append(data[idx:idx+raw_len].decode('ascii', errors='replace'))
+            elif name == "Hex / AOB":
+                prevs.append(data[idx:idx+raw_len].hex().upper())
+            elif name == "Float":
+                prevs.append(struct.unpack("<f", data[idx:idx+4])[0])
+            else:
+                prevs.append(struct.unpack("<i", data[idx:idx+4])[0])
+            
+            if self.type_name == "All Types":
+                types.append(name)
             return False
 
-        def read_fn(addr, n):
-            return winmem.read_bytes(self.handle, addr, n)
+        # Bölgeleri tara
+        for base, size, _, _ in winmem.iter_regions(self.handle, self.scan_kinds, self.writable_only):
+            pos = base
+            end = base + size
+            while pos < end:
+                want = min(CHUNK, end - pos)
+                data = winmem.read_bytes(self.handle, pos, want)
+                if not data:
+                    pos = ((pos + CHUNK) // PAGE + 1) * PAGE
+                    continue
 
-        for base, size, _protect, _kind in winmem.iter_regions(
-            self.handle, self.scan_kinds, self.writable_only
-        ):
-            stopped = scan_stream(read_fn, base, size, needle, width, CHUNK, append)
-            if progress:
-                progress(len(addrs))
-            if stopped:
-                break
+                for name, pattern, align, is_regex in needles:
+                    if is_regex:
+                        for match in pattern.finditer(data):
+                            idx = match.start()
+                            addr = pos + idx
+                            if addr % align == 0:
+                                if append_match(addr, name, len(match.group()), data, idx): break
+                    else:
+                        idx = data.find(pattern)
+                        while idx != -1:
+                            addr = pos + idx
+                            if addr % align == 0:
+                                if append_match(addr, name, len(pattern), data, idx): break
+                            idx = data.find(pattern, idx + 1)
+                pos += len(data)
 
         self._addrs = addrs
-        self._prevs = None
-        self._prev_value = value
+        self._prevs = prevs
+        self._types = types
         return len(addrs)
 
-    def next_scan(self, mode, value=None, progress=None):
-        _, tc = self._fmt()[0], VALUE_TYPES[self.type_name][2]
+    def read_value_dynamic(self, address, type_name):
+        """Verilen adresi belirtilen tipe göre dinamik okur."""
+        if type_name == "4 Bytes":
+            d = winmem.read_bytes(self.handle, address, 4)
+            return struct.unpack("<i", d)[0] if d and len(d) == 4 else None
+        elif type_name == "Float":
+            d = winmem.read_bytes(self.handle, address, 4)
+            return struct.unpack("<f", d)[0] if d and len(d) == 4 else None
+        elif type_name == "String (ASCII)":
+            d = winmem.read_bytes(self.handle, address, 16) # varsayılan 16 karakter oku
+            if not d: return None
+            return d.split(b'\x00')[0].decode('ascii', errors='ignore')
+        elif type_name == "String (UTF-16)":
+            d = winmem.read_bytes(self.handle, address, 32)
+            if not d: return None
+            return d.split(b'\x00\x00')[0].decode('utf-16le', errors='ignore')
+        elif type_name == "Hex / AOB":
+            d = winmem.read_bytes(self.handle, address, 4) # varsayılan 4 byte göster
+            return d.hex().upper() if d else None
+        return None
+
+    def write_value_dynamic(self, address, text_val, type_name):
+        """Verilen adrese belirtilen tipe göre dinamik yazar."""
+        try:
+            if type_name == "4 Bytes":
+                buf = struct.pack("<i", int(text_val, 0))
+            elif type_name == "Float":
+                buf = struct.pack("<f", float(text_val))
+            elif type_name == "String (ASCII)":
+                buf = text_val.encode('ascii', errors='ignore') + b'\x00'
+            elif type_name == "String (UTF-16)":
+                buf = text_val.encode('utf-16le', errors='ignore') + b'\x00\x00'
+            elif type_name == "Hex / AOB":
+                buf = bytes.fromhex(text_val.replace(" ", ""))
+            else:
+                return False
+            return winmem.write_bytes(self.handle, address, buf)
+        except Exception:
+            return False
+
+    def next_scan(self, mode, text_value=None):
         new_addrs = array("Q")
-        new_prevs = array(tc)
+        new_prevs = []
+        new_types = []
+
         for i, addr in enumerate(self._addrs):
-            cur = self.read_value(addr)
+            t = self._types[i] if self._types else self.type_name
+            cur = self.read_value_dynamic(addr, t)
             if cur is None:
                 continue
-            if _matches(mode, cur, self._prev_of(i), value):
+
+            # Eşleşme kontrolü
+            matched = False
+            prev = self._prevs[i]
+
+            if mode == EXACT:
+                if t in ("4 Bytes", "Float"):
+                    try: matched = (cur == float(text_value) if t == "Float" else cur == int(text_value, 0))
+                    except ValueError: pass
+                else:
+                    matched = (str(text_value).lower() in str(cur).lower())
+            elif mode == CHANGED: matched = (cur != prev)
+            elif mode == UNCHANGED: matched = (cur == prev)
+            elif mode == INCREASED and t in ("4 Bytes", "Float"): matched = (cur > prev)
+            elif mode == DECREASED and t in ("4 Bytes", "Float"): matched = (cur < prev)
+
+            if matched:
                 new_addrs.append(addr)
                 new_prevs.append(cur)
-            if progress and (i & 0x3FFF) == 0:
-                progress(len(new_addrs))
+                if self._types:
+                    new_types.append(t)
+
         self._addrs = new_addrs
         self._prevs = new_prevs
-        self.truncated = False
+        self._types = new_types
         return len(new_addrs)
-
-
-def _matches(mode, cur, prev, value):
-    if mode == EXACT:
-        return cur == value
-    if mode == CHANGED:
-        return cur != prev
-    if mode == UNCHANGED:
-        return cur == prev
-    if mode == INCREASED:
-        return cur > prev
-    if mode == DECREASED:
-        return cur < prev
-    return False
-
-
-def parse_value(text, type_name):
-    text = text.strip()
-    if type_name == "Float":
-        return float(text)
-    return int(text, 0)
+        
