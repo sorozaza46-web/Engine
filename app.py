@@ -1,3 +1,4 @@
+import os
 import sys
 import threading
 import tkinter as tk
@@ -5,6 +6,12 @@ from tkinter import messagebox, ttk
 import re
 import struct
 from array import array
+
+# --- MODÜL BULUNAMAMA HATASINI ÇÖZEN KRİTİK EKLEME ---
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+# -----------------------------------------------------
 
 import proclist
 import scanner
@@ -450,17 +457,6 @@ class SheetOnion(tk.Tk):
             self.after(0, lambda: self._end_scan(n))
         threading.Thread(target=work, daemon=True).start()
 
-        def _next_clicked(self):
-        if not self._require_attached() or self.scanning: return
-        mode = self.mode_var.get()
-        val_str = self.value_var.get() if mode == scanner.EXACT else None
-        self._begin_scan("Filtering results...")
-
-        def work():
-            n = self.scanner.next_scan(mode, val_str)
-            self.after(0, lambda: self._end_scan(n))
-        threading.Thread(target=work, daemon=True).start()
-
     def _begin_scan(self, msg):
         self.scanning = True
         for b in (self.first_btn, self.next_btn, self.new_btn, self.attach_btn): b.config(state="disabled")
@@ -577,7 +573,7 @@ class SheetOnion(tk.Tk):
             
         self.hex_text.configure(state="disabled")
 
-    def _results_double(self, event):
+    def _results_double((self, event)):
         item = self.results_tree.identify_row(event.y)
         if not item: return
         self.results_tree.selection_set(item)
@@ -655,7 +651,6 @@ class SheetOnion(tk.Tk):
 
         def commit(_e=None):
             if self._inline_editor is None: return
-            cur = self.table.item(item, "values")
             self.table.set(item, "desc", var.get())
             self._close_inline_editor()
 
