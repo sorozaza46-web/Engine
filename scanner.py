@@ -7,7 +7,6 @@ PAGE = 0x1000
 CHUNK = 4 * 1024 * 1024
 MAX_RESULTS = 10_000_000
 
-# Tarama modları
 EXACT = "Exact Value"
 CHANGED = "Changed"
 UNCHANGED = "Unchanged"
@@ -15,14 +14,15 @@ INCREASED = "Increased"
 DECREASED = "Decreased"
 SCAN_MODES = [EXACT, CHANGED, UNCHANGED, INCREASED, DECREASED]
 
+
 class Scanner:
     def __init__(self):
         self.handle = None
-        self.type_name = "4 Bytes"  # "4 Bytes", "Float", "String (ASCII)", "String (UTF-16)", "Hex / AOB", "All Types"
+        self.type_name = "4 Bytes"  
         self.truncated = False
         self._addrs = array("Q")
-        self._prevs = []  # Değişken tipler için listeye çevrildi
-        self._types = []  # All Types modu için hangi adresin hangi tipte olduğunu tutar
+        self._prevs = []  
+        self._types = []  
         self.scan_kinds = winmem.ALL_KINDS
         self.writable_only = True
 
@@ -54,11 +54,9 @@ class Scanner:
         return out
 
     def _prepare_needles(self, text):
-        """Kullanıcının girdisine göre aranacak bayt kalıplarını ve regexleri hazırlar."""
-        needles = [] # (tip_adı, byte_pattern veya regex_obj, alignment_width, is_regex)
+        needles = []
         text_str = str(text).strip()
 
-        # 1. 4 Bytes Kontrolü
         if self.type_name in ("4 Bytes", "All Types"):
             try:
                 val = int(text_str, 0)
@@ -66,27 +64,22 @@ class Scanner:
                     needles.append(("4 Bytes", struct.pack("<i", val), 4, False))
             except ValueError: pass
 
-        # 2. Float Kontrolü
         if self.type_name in ("Float", "All Types"):
             try:
                 val = float(text_str)
                 needles.append(("Float", struct.pack("<f", val), 4, False))
             except ValueError: pass
 
-        # 3. String ASCII Kontrolü
         if self.type_name in ("String (ASCII)", "All Types") and text_str:
             needles.append(("String (ASCII)", text_str.encode('ascii', errors='ignore'), 1, False))
 
-        # 4. String UTF-16 Kontrolü
         if self.type_name in ("String (UTF-16)", "All Types") and text_str:
             needles.append(("String (UTF-16)", text_str.encode('utf-16le', errors='ignore'), 2, False))
 
-        # 5. Hex / AOB Kontrolü (Wildcard '??' içerebilir)
         if self.type_name in ("Hex / AOB", "All Types"):
             clean = re.sub(r'\s+', '', text_str).upper()
             if all(c in '0123456789ABCDEF?' for c in clean) and len(clean) >= 2:
                 if '?' in clean:
-                    # Regex'e çevir (örn: 45 ?? 8B -> b'E.Text')
                     reg_parts = []
                     for i in range(0, len(clean), 2):
                         pair = clean[i:i+2]
@@ -94,8 +87,7 @@ class Scanner:
                         else: reg_parts.append(re.escape(bytes.fromhex(pair)))
                     needles.append(("Hex / AOB", re.compile(b''.join(reg_parts), re.DOTALL), 1, True))
                 else:
-                    try:
-                        needles.append(("Hex / AOB", bytes.fromhex(clean), 1, False))
+                    try: needles.append(("Hex / AOB", bytes.fromhex(clean), 1, False))
                     except ValueError: pass
 
         return needles
@@ -103,8 +95,7 @@ class Scanner:
     def first_scan(self, text_value):
         self.reset()
         needles = self._prepare_needles(text_value)
-        if not needles:
-            return 0
+        if not needles: return 0
 
         addrs = array("Q")
         prevs = []
@@ -115,7 +106,6 @@ class Scanner:
                 self.truncated = True
                 return True
             addrs.append(addr)
-            # İlk taranan değeri görselleştirmek için sakla
             if "String" in name:
                 prevs.append(data[idx:idx+raw_len].decode('ascii', errors='replace'))
             elif name == "Hex / AOB":
@@ -125,11 +115,9 @@ class Scanner:
             else:
                 prevs.append(struct.unpack("<i", data[idx:idx+4])[0])
             
-            if self.type_name == "All Types":
-                types.append(name)
+            if self.type_name == "All Types": types.append(name)
             return False
 
-        # Bölgeleri tara
         for base, size, _, _ in winmem.iter_regions(self.handle, self.scan_kinds, self.writable_only):
             pos = base
             end = base + size
@@ -162,7 +150,6 @@ class Scanner:
         return len(addrs)
 
     def read_value_dynamic(self, address, type_name):
-        """Verilen adresi belirtilen tipe göre dinamik okur."""
         if type_name == "4 Bytes":
             d = winmem.read_bytes(self.handle, address, 4)
             return struct.unpack("<i", d)[0] if d and len(d) == 4 else None
@@ -170,7 +157,7 @@ class Scanner:
             d = winmem.read_bytes(self.handle, address, 4)
             return struct.unpack("<f", d)[0] if d and len(d) == 4 else None
         elif type_name == "String (ASCII)":
-            d = winmem.read_bytes(self.handle, address, 16) # varsayılan 16 karakter oku
+            d = winmem.read_bytes(self.handle, address, 16)
             if not d: return None
             return d.split(b'\x00')[0].decode('ascii', errors='ignore')
         elif type_name == "String (UTF-16)":
@@ -178,28 +165,20 @@ class Scanner:
             if not d: return None
             return d.split(b'\x00\x00')[0].decode('utf-16le', errors='ignore')
         elif type_name == "Hex / AOB":
-            d = winmem.read_bytes(self.handle, address, 4) # varsayılan 4 byte göster
+            d = winmem.read_bytes(self.handle, address, 4)
             return d.hex().upper() if d else None
         return None
 
     def write_value_dynamic(self, address, text_val, type_name):
-        """Verilen adrese belirtilen tipe göre dinamik yazar."""
         try:
-            if type_name == "4 Bytes":
-                buf = struct.pack("<i", int(text_val, 0))
-            elif type_name == "Float":
-                buf = struct.pack("<f", float(text_val))
-            elif type_name == "String (ASCII)":
-                buf = text_val.encode('ascii', errors='ignore') + b'\x00'
-            elif type_name == "String (UTF-16)":
-                buf = text_val.encode('utf-16le', errors='ignore') + b'\x00\x00'
-            elif type_name == "Hex / AOB":
-                buf = bytes.fromhex(text_val.replace(" ", ""))
-            else:
-                return False
+            if type_name == "4 Bytes": buf = struct.pack("<i", int(text_val, 0))
+            elif type_name == "Float": buf = struct.pack("<f", float(text_val))
+            elif type_name == "String (ASCII)": buf = text_val.encode('ascii', errors='ignore') + b'\x00'
+            elif type_name == "String (UTF-16)": buf = text_val.encode('utf-16le', errors='ignore') + b'\x00\x00'
+            elif type_name == "Hex / AOB": buf = bytes.fromhex(text_val.replace(" ", ""))
+            else: return False
             return winmem.write_bytes(self.handle, address, buf)
-        except Exception:
-            return False
+        except Exception: return False
 
     def next_scan(self, mode, text_value=None):
         new_addrs = array("Q")
@@ -209,10 +188,8 @@ class Scanner:
         for i, addr in enumerate(self._addrs):
             t = self._types[i] if self._types else self.type_name
             cur = self.read_value_dynamic(addr, t)
-            if cur is None:
-                continue
+            if cur is None: continue
 
-            # Eşleşme kontrolü
             matched = False
             prev = self._prevs[i]
 
@@ -220,8 +197,7 @@ class Scanner:
                 if t in ("4 Bytes", "Float"):
                     try: matched = (cur == float(text_value) if t == "Float" else cur == int(text_value, 0))
                     except ValueError: pass
-                else:
-                    matched = (str(text_value).lower() in str(cur).lower())
+                else: matched = (str(text_value).lower() in str(cur).lower())
             elif mode == CHANGED: matched = (cur != prev)
             elif mode == UNCHANGED: matched = (cur == prev)
             elif mode == INCREASED and t in ("4 Bytes", "Float"): matched = (cur > prev)
@@ -230,11 +206,10 @@ class Scanner:
             if matched:
                 new_addrs.append(addr)
                 new_prevs.append(cur)
-                if self._types:
-                    new_types.append(t)
+                if self._types: new_types.append(t)
 
         self._addrs = new_addrs
         self._prevs = new_prevs
         self._types = new_types
         return len(new_addrs)
-        
+                        
