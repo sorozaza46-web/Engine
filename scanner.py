@@ -25,6 +25,7 @@ class Scanner:
         self._types = []  
         self.scan_kinds = winmem.ALL_KINDS
         self.writable_only = True
+        self._last_aob_len = 8  # AOB aramalarında boyutu dinamik tutmak için default
 
     def attach(self, handle, type_name):
         self.handle = handle
@@ -72,6 +73,8 @@ class Scanner:
         if self.type_name in ("Hex / AOB", "All Types"):
             clean = re.sub(r'\s+', '', text_str).upper()
             if all(c in '0123456789ABCDEF?' for c in clean) and len(clean) >= 2:
+                # Aratılan AOB'nin gerçek bayt boyutunu kaydet
+                self._last_aob_len = len(clean) // 2
                 if '?' in clean:
                     reg_parts = []
                     for i in range(0, len(clean), 2):
@@ -100,7 +103,6 @@ class Scanner:
                 return True
             addrs.append(addr)
             
-            # AOB ARAMALARINDA BAYTLARI ARALARINDA BOŞLUKLA "00 00 F0 3F" ŞEKLİNDE KAYDEDER
             if name == "Hex / AOB":
                 raw_bytes = data[idx:idx+raw_len]
                 prevs.append(" ".join(f"{b:02X}" for b in raw_bytes))
@@ -165,8 +167,8 @@ class Scanner:
             if not d: return None
             return d.split(b'\x00\x00')[0].decode('utf-16le', errors='ignore')
         elif type_name == "Hex / AOB":
-            # Dinamik okuma esnasında varsayılan olarak 8 bayt döküm okur ve boşluklu gösterir
-            d = winmem.read_bytes(self.handle, address, 8)
+            # Aratılan AOB uzunluğu kadar dinamik bellek alanını canlı okur
+            d = winmem.read_bytes(self.handle, address, self._last_aob_len)
             return " ".join(f"{b:02X}" for b in d) if d else None
         return None
 
@@ -199,7 +201,6 @@ class Scanner:
                     try: matched = (cur == float(text_value) if t == "Float" else cur == int(text_value, 0))
                     except ValueError: pass
                 else: 
-                    # AOB ve String'lerde boşluksuz/büyük-küçük harfsiz eşleştirme kolaylığı
                     clean_cur = str(cur).replace(" ", "").lower()
                     clean_txt = str(text_value).replace(" ", "").lower()
                     matched = (clean_txt in clean_cur)
