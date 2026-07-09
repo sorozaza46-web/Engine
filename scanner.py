@@ -99,10 +99,13 @@ class Scanner:
                 self.truncated = True
                 return True
             addrs.append(addr)
-            if "String" in name:
+            
+            # AOB ARAMALARINDA BAYTLARI ARALARINDA BOŞLUKLA "00 00 F0 3F" ŞEKLİNDE KAYDEDER
+            if name == "Hex / AOB":
+                raw_bytes = data[idx:idx+raw_len]
+                prevs.append(" ".join(f"{b:02X}" for b in raw_bytes))
+            elif "String" in name:
                 prevs.append(data[idx:idx+raw_len].decode('ascii', errors='replace'))
-            elif name == "Hex / AOB":
-                prevs.append(data[idx:idx+raw_len].hex().upper())
             elif name == "Float":
                 prevs.append(struct.unpack("<f", data[idx:idx+4])[0])
             else:
@@ -162,8 +165,9 @@ class Scanner:
             if not d: return None
             return d.split(b'\x00\x00')[0].decode('utf-16le', errors='ignore')
         elif type_name == "Hex / AOB":
-            d = winmem.read_bytes(self.handle, address, 4)
-            return d.hex().upper() if d else None
+            # Dinamik okuma esnasında varsayılan olarak 8 bayt döküm okur ve boşluklu gösterir
+            d = winmem.read_bytes(self.handle, address, 8)
+            return " ".join(f"{b:02X}" for b in d) if d else None
         return None
 
     def write_value_dynamic(self, address, text_val, type_name):
@@ -194,7 +198,11 @@ class Scanner:
                 if t in ("4 Bytes", "Float"):
                     try: matched = (cur == float(text_value) if t == "Float" else cur == int(text_value, 0))
                     except ValueError: pass
-                else: matched = (str(text_value).lower() in str(cur).lower())
+                else: 
+                    # AOB ve String'lerde boşluksuz/büyük-küçük harfsiz eşleştirme kolaylığı
+                    clean_cur = str(cur).replace(" ", "").lower()
+                    clean_txt = str(text_value).replace(" ", "").lower()
+                    matched = (clean_txt in clean_cur)
             elif mode == CHANGED: matched = (cur != prev)
             elif mode == UNCHANGED: matched = (cur == prev)
             elif mode == INCREASED and t in ("4 Bytes", "Float"): matched = (cur > prev)
