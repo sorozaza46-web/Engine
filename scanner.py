@@ -64,6 +64,13 @@ class Scanner:
                 needles.append(("Float", struct.pack("<f", val), 4, False))
             except ValueError: pass
 
+        # --- DOUBLE ENTEGRASYONU (DÜZELTİLEN KISIM) ---
+        if self.type_name in ("Double", "All Types"):
+            try:
+                val = float(text_str)
+                needles.append(("Double", struct.pack("<d", val), 8, False))
+            except ValueError: pass
+
         if self.type_name in ("String (ASCII)", "All Types") and text_str:
             needles.append(("String (ASCII)", text_str.encode('ascii', errors='ignore'), 1, False))
 
@@ -109,6 +116,9 @@ class Scanner:
                 prevs.append(data[idx:idx+raw_len].decode('ascii', errors='replace'))
             elif name == "Float":
                 prevs.append(struct.unpack("<f", data[idx:idx+4])[0])
+            # --- DOUBLE OKUMA ENTEGRASYONU ---
+            elif name == "Double":
+                prevs.append(struct.unpack("<d", data[idx:idx+8])[0])
             else:
                 prevs.append(struct.unpack("<i", data[idx:idx+4])[0])
             
@@ -157,6 +167,10 @@ class Scanner:
         elif type_name == "Float":
             d = winmem.read_bytes(self.handle, address, 4)
             return struct.unpack("<f", d)[0] if d and len(d) == 4 else None
+        # --- DOUBLE DİNAMİK OKUMA ---
+        elif type_name == "Double":
+            d = winmem.read_bytes(self.handle, address, 8)
+            return struct.unpack("<d", d)[0] if d and len(d) == 8 else None
         elif type_name == "String (ASCII)":
             d = winmem.read_bytes(self.handle, address, 16)
             if not d: return None
@@ -174,6 +188,8 @@ class Scanner:
         try:
             if type_name == "4 Bytes": buf = struct.pack("<i", int(text_val, 0))
             elif type_name == "Float": buf = struct.pack("<f", float(text_val))
+            # --- DOUBLE DİNAMİK YAZMA ---
+            elif type_name == "Double": buf = struct.pack("<d", float(text_val))
             elif type_name == "String (ASCII)": buf = text_val.encode('ascii', errors='ignore') + b'\x00'
             elif type_name == "String (UTF-16)": buf = text_val.encode('utf-16le', errors='ignore') + b'\x00\x00'
             elif type_name == "Hex / AOB": buf = bytes.fromhex(text_val.replace(" ", ""))
@@ -185,6 +201,7 @@ class Scanner:
         new_addrs = array("Q")
         new_prevs = []
         new_types = []
+        epsilon = 0.001  # Ondalıklı sayılar için hassasiyet eşiği
 
         for i, addr in enumerate(self._addrs):
             t = self._types[i] if self._types else self.type_name
@@ -195,17 +212,28 @@ class Scanner:
             prev = self._prevs[i]
 
             if mode == EXACT:
-                if t in ("4 Bytes", "Float"):
-                    try: matched = (cur == float(text_value) if t == "Float" else cur == int(text_value, 0))
+                # --- DOUBLE VE FLOAT İÇİN AKILLI EPSILON KIYASLAMASI ---
+                if t in ("4 Bytes", "Float", "Double"):
+                    try:
+                        if t in ("Float", "Double"):
+                            matched = (abs(cur - float(text_value)) <= epsilon)
+                        else:
+                            matched = (cur == int(text_value, 0))
                     except ValueError: pass
                 else: 
                     clean_cur = str(cur).replace(" ", "").lower()
                     clean_txt = str(text_value).replace(" ", "").lower()
                     matched = (clean_txt in clean_cur)
-            elif mode == CHANGED: matched = (cur != prev)
-            elif mode == UNCHANGED: matched = (cur == prev)
-            elif mode == INCREASED and t in ("4 Bytes", "Float"): matched = (cur > prev)
-            elif mode == DECREASED and t in ("4 Bytes", "Float"): matched = (cur < prev)
+            elif mode == CHANGED:
+                if t in ("Float", "Double"): matched = (abs(cur - prev) > epsilon)
+                else: matched = (cur != prev)
+            elif mode == UNCHANGED:
+                if t in ("Float", "Double"): matched = (abs(cur - prev) <= epsilon)
+                else: matched = (cur == prev)
+            elif mode == INCREASED and t in ("4 Bytes", "Float", "Double"): 
+                matched = (cur > prev)
+            elif mode == DECREASED and t in ("4 Bytes", "Float", "Double"): 
+                matched = (cur < prev)
 
             if matched:
                 new_addrs.append(addr)
@@ -213,7 +241,7 @@ class Scanner:
                 if self._types: new_types.append(t)
 
         self._addrs = new_addrs
-        self._prevs = new_prevs
+        self._prevs = prevs
         self._types = new_types
         return len(new_addrs)
-            
+                                  
