@@ -64,7 +64,7 @@ class Scanner:
                 needles.append(("Float", struct.pack("<f", val), 4, False))
             except ValueError: pass
 
-        # --- DOUBLE ENTEGRASYONU (DÜZELTİLEN KISIM) ---
+        # --- SADECE DOUBLE İÇİN EKLEME ---
         if self.type_name in ("Double", "All Types"):
             try:
                 val = float(text_str)
@@ -116,7 +116,7 @@ class Scanner:
                 prevs.append(data[idx:idx+raw_len].decode('ascii', errors='replace'))
             elif name == "Float":
                 prevs.append(struct.unpack("<f", data[idx:idx+4])[0])
-            # --- DOUBLE OKUMA ENTEGRASYONU ---
+            # --- SADECE DOUBLE İÇİN EKLEME ---
             elif name == "Double":
                 prevs.append(struct.unpack("<d", data[idx:idx+8])[0])
             else:
@@ -167,7 +167,7 @@ class Scanner:
         elif type_name == "Float":
             d = winmem.read_bytes(self.handle, address, 4)
             return struct.unpack("<f", d)[0] if d and len(d) == 4 else None
-        # --- DOUBLE DİNAMİK OKUMA ---
+        # --- SADECE DOUBLE İÇİN EKLEME ---
         elif type_name == "Double":
             d = winmem.read_bytes(self.handle, address, 8)
             return struct.unpack("<d", d)[0] if d and len(d) == 8 else None
@@ -188,7 +188,7 @@ class Scanner:
         try:
             if type_name == "4 Bytes": buf = struct.pack("<i", int(text_val, 0))
             elif type_name == "Float": buf = struct.pack("<f", float(text_val))
-            # --- DOUBLE DİNAMİK YAZMA ---
+            # --- SADECE DOUBLE İÇİN EKLEME ---
             elif type_name == "Double": buf = struct.pack("<d", float(text_val))
             elif type_name == "String (ASCII)": buf = text_val.encode('ascii', errors='ignore') + b'\x00'
             elif type_name == "String (UTF-16)": buf = text_val.encode('utf-16le', errors='ignore') + b'\x00\x00'
@@ -201,7 +201,13 @@ class Scanner:
         new_addrs = array("Q")
         new_prevs = []
         new_types = []
-        epsilon = 0.001  # Ondalıklı sayılar için hassasiyet eşiği
+        epsilon = 0.001
+
+        # Optimizasyon: Target float değerini döngü öncesinde tek seferlik dönüştürüyoruz (Orijinal hız korundu)
+        try:
+            target_float = float(text_value) if text_value is not None else 0.0
+        except ValueError:
+            target_float = 0.0
 
         for i, addr in enumerate(self._addrs):
             t = self._types[i] if self._types else self.type_name
@@ -212,11 +218,10 @@ class Scanner:
             prev = self._prevs[i]
 
             if mode == EXACT:
-                # --- DOUBLE VE FLOAT İÇİN AKILLI EPSILON KIYASLAMASI ---
                 if t in ("4 Bytes", "Float", "Double"):
                     try:
-                        if t in ("Float", "Double"):
-                            matched = (abs(cur - float(text_value)) <= epsilon)
+                        if t == "Float" or t == "Double":
+                            matched = (abs(cur - target_float) <= epsilon)
                         else:
                             matched = (cur == int(text_value, 0))
                     except ValueError: pass
@@ -230,10 +235,8 @@ class Scanner:
             elif mode == UNCHANGED:
                 if t in ("Float", "Double"): matched = (abs(cur - prev) <= epsilon)
                 else: matched = (cur == prev)
-            elif mode == INCREASED and t in ("4 Bytes", "Float", "Double"): 
-                matched = (cur > prev)
-            elif mode == DECREASED and t in ("4 Bytes", "Float", "Double"): 
-                matched = (cur < prev)
+            elif mode == INCREASED and t in ("4 Bytes", "Float", "Double"): matched = (cur > prev)
+            elif mode == DECREASED and t in ("4 Bytes", "Float", "Double"): matched = (cur < prev)
 
             if matched:
                 new_addrs.append(addr)
@@ -241,7 +244,7 @@ class Scanner:
                 if self._types: new_types.append(t)
 
         self._addrs = new_addrs
-        self._prevs = prevs
+        self._prevs = new_prevs
         self._types = new_types
         return len(new_addrs)
-                                  
+        
