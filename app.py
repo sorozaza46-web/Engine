@@ -652,7 +652,7 @@ class SheetOnion(tk.Tk):
                 info["freeze_val"] = None
                 self.table.set(item, "freeze", "[  ]")
 
-    def _toggle_freeze_space((self, event)):
+    def _toggle_freeze_space(self, event):
         sel = self.table.selection()
         if sel: self._toggle_freeze(sel[0])
 
