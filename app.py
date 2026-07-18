@@ -397,10 +397,10 @@ class SheetOnion(tk.Tk):
         self.popup_menu.add_command(label="Toggle Freeze (Lock Value)", command=self._toggle_freeze_context)
         self.popup_menu.add_separator()
         
-        # 🟢 KULLANICININ İSTEDİĞİ İKİ SEÇENEKLİ OTOMATİK SİHİRLİ BÖLÜM
-        self.popup_menu.add_command(label="⚡ Otomatik 8-Byte AOB Bul (Hızlı)", command=lambda: self._auto_magic_opcode_aob(8), font=(UIFONT[0], UIFont[1], "bold"))
-        self.popup_menu.add_command(label="🛡️ Otomatik 32-Byte AOB Bul (Garantili)", command=lambda: self._auto_magic_opcode_aob(32), font=(UIFONT[0], UIFont[1], "bold"))
-        self.popup_menu.add_separator()
+                # 🟢 KULLANICININ İSTEDİĞİ İKİ SEÇENEKLİ OTOMATİK SİHİRLİ BÖLÜM
+        self.popup_menu.add_command(label="⚡ Otomatik 8-Byte AOB Bul (Hızlı)", command=lambda: self._auto_magic_opcode_aob(8), font=(UIFONT[0], UIFONT[1], "bold"))
+        self.popup_menu.add_command(label="🛡️ Otomatik 32-Byte AOB Bul (Garantili)", command=lambda: self._auto_magic_opcode_aob(32), font=(UIFONT[0], UIFONT[1], "bold"))
+        
         
         self.popup_menu.add_command(label="Find out what accesses this address", command=self._find_offsets)
         self.popup_menu.add_command(label="✦ Generate/Scan Pointer Map", command=self._auto_find_pointer)
